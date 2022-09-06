@@ -43,7 +43,7 @@ We can time this with `BenchmarkTools.jl`:
 
 ```julia
 using BenchmarkTools
-n = 1024;
+n = 2^14;
 T = 100;
 @btime simple_monte_carlo(n, T)
 ```
@@ -229,7 +229,7 @@ end
 
 Now we can use our previous function, but changing the inputs:
 ```julia
-@btime simple_monte_carlo_array!($x_dist, $T, $x_cache_dist)
+simple_monte_carlo_array!(x_dist, T, x_cache_dist)
 ```
 
 This takes `332.710 ms` for `8` process, let's see what the original time is on this case:
@@ -279,16 +279,15 @@ py_simple_monte_carlo_np_f32_fn = py"simple_monte_carlo_np_f32"
 
 ```julia
 function simple_monte_carlo_array_block_threaded!(x, T, cache=similar(x))
-    n = length(x)
-    n_threads = Threads.nthreads()
-    block_size = Int(ceil(n / n_threads))
-    @inbounds Threads.@threads for i = 0:n_threads-1
+    n = length(x) # Number of elements
+    n_threads = Threads.nthreads() # Number of threads/cores
+    block_size = Int(ceil(n / n_threads)) # Elements per core
+    Threads.@threads for i = 0:n_threads-1 # Loop over each core
         start_i = i * block_size + 1
         end_i = min(n, (i+1)*block_size)
-        r = start_i:end_i
-        simple_monte_carlo_array!(view(x, r), T, view(cache,r))
+        indices = start_i:end_i
+        simple_monte_carlo_array!(view(x, indices), T, view(cache,indices))
     end
-    nothing
 end
 ```
 
@@ -355,7 +354,7 @@ function compare_speedups(results; ref_label=:array, num_workers=Threads.nthread
 
     plt = plot(ns, (x->num_workers).(ns); linestyle=:dot, markershape=:none, label="# Cores", lw=3, c=:black)
     plt = plot!(plt, ns, (x->1.0).(ns); linestyle=:dash, markershape=:none, label="Array", lw=2, c=:black)
-    colours = [:red, :purple, :green, :lightblue, :orange, :pink]
+    colours = [:darkred, :purple, :green, :lightblue, :orange, :pink, :brown]
     for (i, label) in enumerate(sort(labels))
         if label == ref_label || label in exclude_symbols
             continue
