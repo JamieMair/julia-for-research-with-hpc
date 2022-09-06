@@ -207,16 +207,27 @@ x_distributed = dzeros(n_large);
 x_dist_cache = similar(x_distributed);
 ```
 
-Since `DistributedArrays.jl` is very bare-bones, we have to implement a very of `randn!` for a distributed array, but luckily, this is quite easy:
+Since `DistributedArrays.jl` is very bare-bones, we will have to wrap our code to get this working, but due to multiple dispatch, we can still use our original function!
 
 ```julia
 @everywhere using Random
-@everywhere function custom_randn!(x::DArray)
-    randn!(localpart(x))
-end
-function Random.randn!(x::DArray)
-    myid() == 1 && SPMD.spmd(custom_randn!, x)
+@everywhere function simple_monte_carlo_array!(x::AbstractArray, T, cache::AbstractArray=similar(x))
+    fill!(x, zero(eltype(x)))
+
+    for _ in 1:T
+        # Fill the cache up with random numbers
+        randn!(cache)
+        # Add these random numbers element wise
+        x .+= cache
+    end
     nothing
+end
+@everywhere function simple_monte_carlo_array!(x::DArray, T, cache::DArray=similar(x))
+    if myid() != 1
+        return nothing
+    end
+    
+    SPMD.spmd((xi,ci,Ti) -> simple_monte_carlo_array!(localpart(xi), Ti, localpart(ci)), x, cache, T; pids=workers())
 end
 ```
 
@@ -225,7 +236,7 @@ Now we can use our previous function, but changing the inputs:
 @btime simple_monte_carlo_array!($x_distributed, $T, $x_dist_cache)
 ```
 
-Let's see how this compares to the original:
+This takes `283.663 ms` for `8` process, let's see what the original time is on this case:
 
 ```julia
 x_large = zeros(n_large);
@@ -233,7 +244,7 @@ x_large_cache = similar(x_large);
 @btime simple_monte_carlo_array!($x_large, $T, $x_large_cache)
 ```
 
-One can see that we only get around a 2x speedup here, which is not great considering we have `8` workers, however, we were able to split up the memory across multiple proceses.
+Now we measure the time to be `1.874 s`, which means by moving to a distributed array we have a `6.6` times speedup. Considering we only have `8` processes, and the workload is still small, this is pretty good.
 
 ## GPUs
 
