@@ -1,0 +1,254 @@
+
+# Setup
+This file will act as a guide through optimising a simple monte carlo problem, and running the code at different scales. 
+
+To begin, let's just load in some packages that will be useful throughout.
+
+```julia
+using Revise
+using BenchmarkTools
+using Plots
+using Random
+Random.seed!(1234)
+```
+
+# Monte Carlo Problem
+
+Let's introduce a monte carlo problem, which will be what we will be optimising to run at different scales today. This problem will be just a simple random walk, which can be plotted:
+
+```julia
+begin
+    plt = plot(cumsum(randn(100)), legend=false)
+    xlabel!(plt, "Time")
+    ylabel!(plt, "x")
+    return plt
+end
+```
+
+Let's say that we only care about the final point of the simulation, ``x_T``, where ``T`` is the number of steps taken. We want to sample this ``n`` times. We can write an easy function which calculates this array:
+
+```julia
+function simple_monte_carlo(n, T)
+    x = zeros(n)
+    for i in eachindex(x)
+        for t in 1:T
+            x[i] += randn()
+        end
+    end
+    return x
+end
+```
+
+We can time this with `BenchmarkTools.jl`:
+
+```julia
+n = 1000
+T = 100
+@btime simple_monte_carlo(n, T)
+```
+
+## Comparison to Python
+
+We can already see that this is very fast. Out of curiosity, let's translate this into Python, and see how fast this is. First of all, let's setup our ability to call Python with `PyCall.jl`:
+
+```julia
+using PyCall
+using Pkg
+Pkg.build("PyCall")
+```
+
+From here, let's write the same function:
+
+```julia
+py"""
+import random
+def simple_monte_carlo(n, T):
+    x = [0.0 for _ in range(n)]
+    for i in range(n):
+        for t in range(T):
+            x[i] += random.gauss(0.0,1.0)
+    return x
+"""
+py_simple_monte_carlo_fn = py"simple_monte_carlo"
+```
+
+We can benchmark it in the same way:
+
+```julia
+@btime simple_monte_carlo($n, $T)
+@btime py_simple_monte_carlo_fn($n, $T)
+```
+
+Python took around `48.427 ms`, whereas the native Julia implementation took only `298.683 μs`, which is `162` times slower. But this is to be expected. Nobody expects Python to be fast, and this is not how one achieves speed in Python. Usually, one writes these operations as array operations, and delegates the performance to a fast library like `numpy`. Let's try that in both cases, by first adding `numpy`:
+
+```julia
+using Conda
+Conda.add("numpy")
+Pkg.build("PyCall")
+```
+
+Then write the function:
+
+```julia
+py"""
+import numpy as np
+def simple_monte_carlo_np(n, T):
+    x = np.zeros(n)
+    for t in range(T):
+        x += np.random.randn(n)
+    return x
+"""
+py_simple_monte_carlo_np_fn = py"simple_monte_carlo_np"
+```
+
+Now, let's benchmark:
+```julia
+@btime py_simple_monte_carlo_np_fn($n, $T)
+```
+
+Now this is much better, only `2.119 ms` now, but this is still around `7` times slower than our basic Julia version, which really goes to show you that the compiler is very good and can optimise your code a lot. Let's see if we can take this array approach and use a few techniques to speed up our code:
+
+```julia
+function simple_monte_carlo_optimised!(x, T)
+    @inbounds for i in eachindex(x)
+        x_i = zero(eltype(x))
+        for _ in 1:T
+            x_i += randn()
+        end
+        x[i] = x_i
+    end
+    return nothing
+end
+```
+
+The `!` is called a "bang" and it is just notation which means that the first argument input is modified by the function. We have moved responsibility for generating `x` away from the function. This means that this function can be called many times and not allocate any memory. Also we have used the `@inbounds` macro to turn off bounds checking on the array, since we are confident that we will not index outside of it, this can be a big performance boost. Let's see what happens:
+
+```julia
+x = zeros(n); # Preallocate the array
+@btime simple_monte_carlo_optimised!($x, $T)
+```
+
+Now we are at `210.704 μs`! This is around `42%` faster now, just by changing a few easy things. Also this function does not allocate.
+## Multithreading
+
+We can make this even faster now, by using multithreading, since most CPUs have multiple cores, how do we do this? In Julia, multithreading support is built into the standard libraries, so it is very easy to add:
+
+```julia
+function simple_monte_carlo_threaded!(x, T)
+    @inbounds Threads.@threads for i in eachindex(x)
+        x_i = zero(eltype(x))
+        for _ in 1:T
+            x_i += randn()
+        end
+        x[i] = x_i
+    end
+    return nothing
+end
+```
+
+We didn't have to change much of the code, just put the `Threads.@threads` macro in front of our for loop, and it will parallelise that loop. Let's test:
+
+```julia
+Threads.nthreads()
+@btime simple_monte_carlo_threaded!($x, $T)
+```
+
+Currently, I have `8` threads and we were able to get `43.062 μs`. This is around a `5` times speedup, showing that threading does have some overhead. This is less noticable when the workload is much larger.
+
+For now, let's take a look at the array approach:
+
+```julia
+function simple_monte_carlo_array!(x, T, cache=similar(x))
+    fill!(x, zero(eltype(x)))
+
+    for _ in 1:T
+        # Fill the cache up with random numbers
+        randn!(cache)
+        # Add these random numbers element wise
+        x .+= cache
+    end
+    nothing
+end
+```
+
+Now we have a cache for the random numbers. This can be created before, or optionally, created on the fly:
+
+```julia
+cache = similar(x);
+@btime simple_monte_carlo_array!($x, $T, $cache)
+```
+
+Notice that this is our fastest implementation so far, without using threads. This approach is not allocating, as it will be the final change to our code for the rest of this walkthrough. A quick note - `similar` is a function which allocates an array which is the same size and type as the input, but does not try to initialise any of the values.
+
+## Multiprocessing
+
+In Julia, you can start and connect multiple processing using the `Distributed.jl` standard library. One can start Julia with multiple processes in the command line as well:
+```bash
+julia -p 8
+```
+
+One can also add processes during runtime with:
+```julia
+using Distributed
+addprocs(8; exeflags=["--project"])
+```
+
+One can see the number of processes available with:
+```julia
+workers()
+```
+
+We can also use `DistributedArrays.jl` to parallelise our previous function to a much larger sample, we use the `@everywhere` macro to run it on all processes.
+
+```julia
+@everywhere using DistributedArrays
+n_large = length(workers())*1_000_000;
+x_distributed = dzeros(n_large);
+x_dist_cache = similar(x_distributed);
+```
+
+Since `DistributedArrays.jl` is very bare-bones, we have to implement a very of `randn!` for a distributed array, but luckily, this is quite easy:
+
+```julia
+@everywhere using Random
+@everywhere function custom_randn!(x::DArray)
+    randn!(localpart(x))
+end
+function Random.randn!(x::DArray)
+    myid() == 1 && SPMD.spmd(custom_randn!, x)
+    nothing
+end
+```
+
+Now we can use our previous function, but changing the inputs:
+```julia
+@btime simple_monte_carlo_array!($x_distributed, $T, $x_dist_cache)
+```
+
+Let's see how this compares to the original:
+
+```julia
+x_large = zeros(n_large);
+x_large_cache = similar(x_large);
+@btime simple_monte_carlo_array!($x_large, $T, $x_large_cache)
+```
+
+One can see that we only get around a 2x speedup here, which is not great considering we have `8` workers, however, we were able to split up the memory across multiple proceses.
+
+## GPUs
+
+Luckily, Julia has a whole ecosystem of packages designed to write native Julia code which can run on the GPU. CUDA is NVIDIA's proprietary SDK for writing GPU code for their hardware. The bindings for this SDK are available in `CUDA.jl`, which is the most developed amongst the GPU packages. In order to get our code running on the GPU, all we need to do is just convert our input arrays into CUDA arrays:
+
+```julia
+using CUDA
+x_large_gpu = cu(x_large);
+x_large_cache_gpu = similar(x_large_gpu);
+```
+
+Now to benchmark, we need to use the `CUDA.@sync` macro to make sure that our timing is accurate:
+
+```julia
+@btime CUDA.@sync simple_monte_carlo_array!($x_large_gpu, $T, $x_large_cache_gpu)
+```
+
+We can see that our original code was compiled into GPU kernels that run on our graphics card. Here, the execution only took around `33.396ms`, which is around `60` times faster than a single core CPU execution, and all we had to do was move our input arrays to the GPU!
