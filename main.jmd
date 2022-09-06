@@ -42,8 +42,9 @@ end
 We can time this with `BenchmarkTools.jl`:
 
 ```julia
-n = 1024
-T = 100
+using BenchmarkTools
+n = 1024;
+T = 100;
 @btime simple_monte_carlo(n, T)
 ```
 
@@ -60,6 +61,7 @@ Pkg.build("PyCall")
 From here, let's write the same function:
 
 ```julia
+using PyCall
 py"""
 import random
 def simple_monte_carlo(n, T):
@@ -67,10 +69,10 @@ def simple_monte_carlo(n, T):
     for i in range(n):
         for t in range(T):
             x[i] += random.gauss(0.0,1.0)
-    return None
-    # return x
+    return x
 """
 py_simple_monte_carlo_fn = py"simple_monte_carlo"
+@btime py_simple_monte_carlo_fn($n, $T)
 ```
 
 We can benchmark it in the same way:
@@ -98,8 +100,7 @@ def simple_monte_carlo_np(n, T):
     for t in range(T):
         x += np.random.randn(n)
 
-    return None
-    # return x
+    return x
 """
 py_simple_monte_carlo_np_fn = py"simple_monte_carlo_np"
 ```
@@ -120,7 +121,6 @@ function simple_monte_carlo_optimised!(x, T)
         end
         x[i] = x_i
     end
-    return nothing
 end
 ```
 
@@ -131,7 +131,7 @@ x = zeros(n); # Preallocate the array
 @btime simple_monte_carlo_optimised!($x, $T)
 ```
 
-Now we are at `210.704 μs`! This is around `42%` faster now, just by changing a few easy things. Also this function does not allocate.
+Now we are at `210.704 μs`! This is around `30%` faster now, just by changing a few easy things. Also this function does not allocate.
 ## Multithreading
 
 We can make this even faster now, by using multithreading, since most CPUs have multiple cores, how do we do this? In Julia, multithreading support is built into the standard libraries, so it is very easy to add:
@@ -145,7 +145,6 @@ function simple_monte_carlo_threaded!(x, T)
         end
         x[i] = x_i
     end
-    return nothing
 end
 ```
 
@@ -162,21 +161,18 @@ For now, let's take a look at the array approach:
 
 ```julia
 function simple_monte_carlo_array!(x, T, cache=similar(x))
-    fill!(x, zero(eltype(x)))
-
+    fill!(x, zero(eltype(x))) # Fill the array x with zeros
     for _ in 1:T
-        # Fill the cache up with random numbers
-        randn!(cache)
-        # Add these random numbers element wise
-        x .+= cache
+        randn!(cache) # Put random numbers in the cache array
+        x .+= cache # Add the random numbers element-wise to x
     end
-    nothing
 end
 ```
 
 Now we have a cache for the random numbers. This can be created before, or optionally, created on the fly:
 
 ```julia
+x = zeros(n);
 cache = similar(x);
 @btime simple_monte_carlo_array!($x, $T, $cache)
 ```
@@ -205,46 +201,43 @@ We can also use `DistributedArrays.jl` to parallelise our previous function to a
 
 ```julia
 @everywhere using DistributedArrays
-n_large = length(workers())*1_000_000;
-x_distributed = dzeros(n_large);
-x_dist_cache = similar(x_distributed);
+n = 10^7 # 10 million
+T = 100
+x_dist = dzeros(n);
+x_cache_dist = dzeros(n);
 ```
-
 Since `DistributedArrays.jl` is very bare-bones, we will have to wrap our code to get this working, but due to multiple dispatch, we can still use our original function!
 
 ```julia
 @everywhere using Random
-@everywhere function simple_monte_carlo_array!(x::AbstractArray, T, cache::AbstractArray=similar(x))
-    fill!(x, zero(eltype(x)))
-
+@everywhere function simple_monte_carlo_array!(x::AbstractArray, T, cache::AbstractArray)
+    fill!(x, zero(eltype(x))) # Fill the array x with zeros
     for _ in 1:T
-        # Fill the cache up with random numbers
-        randn!(cache)
-        # Add these random numbers element wise
-        x .+= cache
+        randn!(cache) # Put random numbers in the cache array
+        x .+= cache # Add the random numbers element-wise to x
     end
     nothing
 end
-@everywhere function simple_monte_carlo_array!(x::DArray, T, cache::DArray=similar(x))
-    if myid() != 1
-        return nothing
+@everywhere function simple_monte_carlo_array!(x::DArray, T, cache::DArray)
+    if myid() == 1 # Main process (not a worker)
+        SPMD.spmd(simple_monte_carlo_array!, x, T, cache; pids=workers())
+    else
+        simple_monte_carlo_array!(localpart(x), T, localpart(cache))
     end
-    
-    SPMD.spmd((xi,ci,Ti) -> simple_monte_carlo_array!(localpart(xi), Ti, localpart(ci)), x, cache, T; pids=workers())
 end
 ```
 
 Now we can use our previous function, but changing the inputs:
 ```julia
-@btime simple_monte_carlo_array!($x_distributed, $T, $x_dist_cache)
+@btime simple_monte_carlo_array!($x_dist, $T, $x_cache_dist)
 ```
 
-This takes `283.663 ms` for `8` process, let's see what the original time is on this case:
+This takes `332.710 ms` for `8` process, let's see what the original time is on this case:
 
 ```julia
-x_large = zeros(n_large);
-x_large_cache = similar(x_large);
-@btime simple_monte_carlo_array!($x_large, $T, $x_large_cache)
+x = Array(x_dist);
+cache = similar(x);
+@btime simple_monte_carlo_array!($x, $T, $cache)
 ```
 
 Now we measure the time to be `1.874 s`, which means by moving to a distributed array we have a `6.6` times speedup. Considering we only have `8` processes, and the workload is still small, this is pretty good.
@@ -305,8 +298,8 @@ function gather_benchmarks(n, T, element_type=Float32)
     cache = similar(x)
     x_dist = distribute(x)
     x_dist_cache = similar(x_dist)
-    # x_gpu = cu(x)
-    # x_gpu_cache = similar(x_gpu)
+    x_gpu = cu(x)
+    x_gpu_cache = similar(x_gpu)
 
     timings = Dict{Symbol, Float64}();
 
@@ -315,7 +308,17 @@ function gather_benchmarks(n, T, element_type=Float32)
     timings[:threaded] = @belapsed simple_monte_carlo_threaded!($x, $T)
     timings[:threaded_blocked] = @belapsed simple_monte_carlo_array_block_threaded!($x, $T, $cache)
     timings[:distributed] = @belapsed simple_monte_carlo_array!($x_dist, $T, $x_dist_cache)
-    # timings[:gpu] = @belapsed CUDA.@sync simple_monte_carlo_array!($x_gpu, $T, $x_gpu_cache)
+    timings[:gpu] = @belapsed CUDA.@sync simple_monte_carlo_array!($x_gpu, $T, $x_gpu_cache)
+
+    return timings
+end
+using Random
+function gather_benchmarks(n, T)
+    x_gpu = CUDA.zeros(n)
+    x_gpu_cache = similar(x_gpu)
+
+    timings = Dict{Symbol, Float64}();
+    timings[:gpu] = @belapsed CUDA.@sync simple_monte_carlo_array!($x_gpu, $T, $x_gpu_cache) seconds=30
 
     return timings
 end
@@ -341,7 +344,7 @@ end
 ```
 
 ```julia
-function compare_speedups(results; ref_label=:array, num_workers=Threads.nthreads())
+function compare_speedups(results; ref_label=:array, num_workers=Threads.nthreads(), exclude_symbols=[])
     T = results.T
     ns = results.ns
     timings = results.timings
@@ -350,25 +353,44 @@ function compare_speedups(results; ref_label=:array, num_workers=Threads.nthread
     ref_times = (x->x[ref_label]).(timings)
     markers = [:circle, :diamond, :utriangle, :star4, :dtriangle]
 
-    plt = plot(ns, (x->num_workers).(ns); linestyle=:dash, markershape=:none, label="Num Workers", lw=2)
-    plt = plot!(plt, ns, (x->1.0).(ns); linestyle=:dash, markershape=:none, label="Array", lw=2)
+    plt = plot(ns, (x->num_workers).(ns); linestyle=:dot, markershape=:none, label="# Cores", lw=3, c=:black)
+    plt = plot!(plt, ns, (x->1.0).(ns); linestyle=:dash, markershape=:none, label="Array", lw=2, c=:black)
+    colours = [:red, :purple, :green, :lightblue, :orange, :pink]
     for (i, label) in enumerate(sort(labels))
-        if label == ref_label
+        if label == ref_label || label in exclude_symbols
             continue
         end
         l_timings = (x->x[label]).(timings)
         rel_speedup = ref_times ./ l_timings
-        plot!(plt, ns, rel_speedup, label=string(label), xscale=:log10, yscale=:log10, markershape=markers[(i-1)%length(markers)+1], lw=2, markersize=6, yformatter=:plain)
+        plot!(plt, ns, rel_speedup, label=string(label), xscale=:log10, yscale=:log10, markershape=markers[(i-1)%length(markers)+1], lw=2, markersize=6, yformatter=:plain, c=colours[(i-1)%length(colours)+1])
     end
     xlabel!(plt, "n")
     ylabel!(plt, "Relative Speedup")
     xticks!(plt, collect(10 .^ (Int(ceil(log10(minimum(ns)))):Int(ceil(log10(maximum(ns)))))))
-    y_ticks = [0.1, 1, num_workers]
+    y_ticks = [0.01, 0.1, 1, 10, 100]
     yticks!(plt, (y_ticks, (x-> x % 1 == 0 ? string(Int(x)) : string(x)).(y_ticks)))
     
-    plot!(plt; legend=:bottomright, legend_foreground_color=nothing)
+    plot!(plt; legend=:bottomright, legend_foreground_color=nothing, dpi=300)
 
     return plt
 end
-
 ```
+
+Let's see what these results look like:
+
+```julia
+using BSON
+if isfile("results.bson")
+    BSON.@load "results.bson" results
+else
+    results = gather_results()
+    BSON.@save "results.bson" results
+end
+```
+
+Let's plot these results:
+```julia
+compare_speedups(results)
+```
+
+The GPU is around ``90`` times faster than the array implementation for around ``n=10^7``.
