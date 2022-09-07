@@ -18,7 +18,7 @@ Let's introduce a monte carlo problem, which will be what we will be optimising 
 
 ```julia
 begin
-    plt = plot(cumsum(randn(100)), legend=false)
+    plt = plot(cumsum(randn(100, 10000), dims=2)', legend=false, c=:blue, alpha=0.1)
     xlabel!(plt, "Time")
     ylabel!(plt, "x")
     return plt
