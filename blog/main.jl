@@ -58,9 +58,11 @@ function add_serial_benchmark!(df)
         GC.gc();
         return time;
     end
-
-    julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
-    df[:, :times_jl_ns] = julia_times;
+    sym = :times_jl_ns
+    
+    is_missing_indexer = hasproperty(df, sym) ? ismissing.(df[:, sym]) : (x->true).(df.n)
+    df[is_missing_indexer, sym] = bench_julia.(Iterators.zip(df.n[is_missing_indexer], df.T[is_missing_indexer])) .* 1e9;
+    
     nothing
 end
 function add_threaded_benchmark!(df)
@@ -71,8 +73,11 @@ function add_threaded_benchmark!(df)
         return time;
     end
 
-    julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
-    df[:, :times_jl_threaded_ns] = julia_times;
+    sym = :times_jl_threaded_ns
+    
+    is_missing_indexer = hasproperty(df, sym) ? ismissing.(df[:, sym]) : (x->true).(df.n)
+    df[is_missing_indexer, sym] = bench_julia.(Iterators.zip(df.n[is_missing_indexer], df.T[is_missing_indexer])) .* 1e9;
+
     nothing
 end
 function add_array_benchmark!(df)
@@ -82,9 +87,10 @@ function add_array_benchmark!(df)
         GC.gc();
         return time;
     end
+    sym = :times_jl_array_ns
+    is_missing_indexer = hasproperty(df, sym) ? ismissing.(df[:, sym]) : (x->true).(df.n)
+    df[is_missing_indexer, sym] = bench_julia.(Iterators.zip(df.n[is_missing_indexer], df.T[is_missing_indexer])) .* 1e9;
 
-    julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
-    df[:, :times_jl_array_ns] = julia_times;
     nothing
 end
 function add_gpu_benchmark!(df)
@@ -95,8 +101,9 @@ function add_gpu_benchmark!(df)
         return time;
     end
     sym = :times_jl_gpu_ns
-    julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
-    df[:, sym] = julia_times;
+    is_missing_indexer = hasproperty(df, sym) ? ismissing.(df[:, sym]) : (x->true).(df.n)
+    df[is_missing_indexer, sym] = bench_julia.(Iterators.zip(df.n[is_missing_indexer], df.T[is_missing_indexer])) .* 1e9;
+
     nothing
 end
 
@@ -146,7 +153,9 @@ end
 
 function create_gpu_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
-    plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU"; legend=:topleft, new_plot=false)
+    plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU"; legend=:topleft, new_plot=false, yscale=:log10)
+    xticks!(10 .^ (1:10))
+    
     savefig("figures/monte_carlo_gpu.png")
     return plt
 end
