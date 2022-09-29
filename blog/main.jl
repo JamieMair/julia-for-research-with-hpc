@@ -3,6 +3,7 @@ using BenchmarkTools
 using Plots
 using DataFrames
 using CSV
+using CUDA
 
 function simple_monte_carlo(n, T)
 	x = zeros(n)	
@@ -37,11 +38,16 @@ function simple_monte_carlo_array(n, T)
 	random_walk!(x, T)
 	return x
 end
+function simple_monte_carlo_gpu(n, T)
+	x = CUDA.zeros(n) # Creates a GPU array of zeros
+	random_walk!(x, T) # Same fn as before, but different type of `x`
+	return x
+end
 
 
 function read_cpp_csv(filename = "cpp_results.csv")
     df = DataFrame(CSV.File(filename))
-    rename!(df, :time_ns=>:times_cpp_ns)
+    rename!(df, :time_ns=>:cpp_ns)
     return df;
 end
 
@@ -79,6 +85,18 @@ function add_array_benchmark!(df)
 
     julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
     df[:, :times_jl_array_ns] = julia_times;
+    nothing
+end
+function add_gpu_benchmark!(df)
+    function bench_julia(args)
+        n, T = args
+        time = @belapsed CUDA.@sync simple_monte_carlo_gpu($n, $T);
+        GC.gc();
+        return time;
+    end
+    sym = :times_jl_gpu_ns
+    julia_times = bench_julia.(Iterators.zip(df.n, df.T)) .* 1e9;
+    df[:, sym] = julia_times;
     nothing
 end
 
@@ -123,5 +141,12 @@ function create_array_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
     plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array"; legend=:topleft, new_plot=false)
     savefig("figures/monte_carlo_array.png")
+    return plt
+end
+
+function create_gpu_plot(df; num_threads=Threads.nthreads())
+    plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
+    plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU"; legend=:topleft, new_plot=false)
+    savefig("figures/monte_carlo_gpu.png")
     return plt
 end
