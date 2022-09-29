@@ -85,7 +85,7 @@ function compare_benches(df, comparisons...; new_plot = true, kwargs...)
 end
 
 function create_threaded_plot(df; num_threads=Threads.nthreads())
-    plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash)
+    plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
     plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded"; legend=:topleft, new_plot=false)
     savefig("figures/monte_carlo_threaded.png")
     return plt
