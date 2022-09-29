@@ -161,7 +161,7 @@ function create_gpu_plot(df; num_threads=Threads.nthreads())
 end
 
 function create_dist_plot(df; num_threads=Threads.nthreads())
-    plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
+    plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Cores", linestyle=:dash, lw=2)
     plt = compare_benches(df, :times_cpp_ns=>"CPP", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU", :times_jl_dist_ns=>"DArray"; legend=:topleft, new_plot=false, yscale=:log10)
     xticks!(10 .^ (1:10))
     
