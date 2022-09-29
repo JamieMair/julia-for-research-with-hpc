@@ -37,6 +37,10 @@ function save_bench(df, filename="julia_vs_cpp_results.csv")
     CSV.write(filename, df);
 end
 
+function load_bench(filename="julia_vs_cpp_results.csv")
+    return DataFrame(CSV.File(filename))
+end
+
 function compare_benches(df)
     plt = plot(df.n, df.times_cpp_ns./df.times_jl_ns, label="C++", markershape=:diamond, lw=2)
     plot!(plt, df.n, df.times_jl_ns./df.times_jl_ns, label="Julia", markershape=:circle, lw=2)

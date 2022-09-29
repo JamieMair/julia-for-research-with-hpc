@@ -9,13 +9,13 @@
 
 using namespace std::chrono;
 
-double *random_walk(int n, int T, std::normal_distribution<double> randn, std::mt19937_64 rng)
+double *random_walk(size_t n, size_t T, std::normal_distribution<double> randn, std::mt19937_64 rng)
 {
     double *x = new double[n];
-    for (int i = 0; i < n; i++)
+    for (size_t i = 0; i < n; i++)
     {
         double x_t = 0.0;
-        for (int t = 0; t < T; t++)
+        for (size_t t = 0; t < T; t++)
         {
             x_t += randn(rng);
         }
@@ -24,7 +24,7 @@ double *random_walk(int n, int T, std::normal_distribution<double> randn, std::m
     return x;
 }
 
-double measure_random_walk_time(int n, int T, int repeats)
+double measure_random_walk_time(size_t n, size_t T, size_t repeats)
 {
     std::random_device rd{};
     std::mt19937_64 rng{rd()};
@@ -55,11 +55,11 @@ int main()
     // standard deviation affects the dispersion of generated values from the mean
     std::normal_distribution<> randn{0, 1};
 
-    int repeats = 500;
-    int ns[] {
+    size_t repeats = 500;
+    size_t ns[] {
         8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384
     };
-    int T = 100;
+    size_t T = 100;
     std::string filename("cpp_results.csv");
     std::fstream csv_file;
 
@@ -67,7 +67,7 @@ int main()
 
     csv_file << "n,T,time_ns" << std::endl;
 
-    for (int n:ns)
+    for (size_t n:ns)
     {
         double min_time = measure_random_walk_time(n, T, repeats);
         csv_file << n << "," << T << "," << min_time << std::endl;
