@@ -51,6 +51,15 @@ function read_cpp_csv(filename = "cpp_results.csv")
     return df;
 end
 
+const symbol_to_line_style_mapping = Dict{Symbol, Any}(
+    :times_cpp_ns => (label="C++", c=:orange, markershape=:circle),
+    :times_jl_ns => (label="Serial", c=:darkred, markershape=:utriangle),
+    :times_jl_threaded_ns => (label="Threaded", c=:purple, markershape=:diamond),
+    :times_jl_array_ns => (label="Array", c=:darkcyan, markershape=:rect),
+    :times_jl_gpu_ns => (label="GPU", c=:green, markershape=:octagon),
+    :times_jl_dist_ns => (label="DArray", c=:darkblue, markershape=:dtriangle),
+)
+
 function add_serial_benchmark!(df)
     function bench_julia(args)
         n, T = args
@@ -116,12 +125,13 @@ function load_bench(filename="julia_vs_cpp_results.csv")
 end
 
 
-function compare_benches(df, comparisons...; new_plot = true, kwargs...)
-    comparison_dict = Dict(comparisons...)
+function compare_benches(df, symbols...; new_plot = true, kwargs...)
     plot_fn = new_plot ? plot : plot!
-    plt = plot_fn(df.n, df.times_jl_ns./df.times_jl_ns, label="Serial", markershape=:circle, lw=2)
-    for (sym, label) in comparison_dict
-        plot!(plt, df.n, df.times_jl_ns ./ df[:, sym], label=label, markershape=:auto, lw=2)
+    
+    plt = plot_fn(df.n, df.times_jl_ns./df.times_jl_ns, label=symbol_to_line_style_mapping[:times_jl_ns].label, c=symbol_to_line_style_mapping[:times_jl_ns].c, markershape=symbol_to_line_style_mapping[:times_jl_ns].markershape, lw=2)
+    for sym in symbols
+        label, c, markershape = symbol_to_line_style_mapping[sym]
+        plot!(plt, df.n, df.times_jl_ns ./ df[:, sym], label=label, c=c, markershape=markershape, lw=2)
     end
     plot!(plt; xscale=:log10, kwargs...)
     ylabel!(plt, "Relative Speedup")
@@ -130,8 +140,8 @@ function compare_benches(df, comparisons...; new_plot = true, kwargs...)
 end
 
 function create_cpp_plot(df)
-    plt = plot(df.n, df.times_jl_ns, label="Julia", markershape=:circle, lw=2)
-    plot!(df.n, df.times_cpp_ns, label="C++", markershape=:auto, lw=2, legend=:topleft, xscale=:log10, yscale=:log10)
+    plt = plot(df.n, df.times_jl_ns, label="Julia", c=symbol_to_line_style_mapping[:times_jl_ns].c, markershape=symbol_to_line_style_mapping[:times_jl_ns].markershape, lw=2)
+    plot!(df.n, df.times_cpp_ns, label="C++", c=symbol_to_line_style_mapping[:times_cpp_ns].c, markershape=symbol_to_line_style_mapping[:times_jl_ns].markershape, lw=2, legend=:topleft, xscale=:log10, yscale=:log10)
     xticks!(10 .^ (1:10))
     xlabel!("n")
     ylabel!("Time (ns)")
@@ -140,7 +150,7 @@ function create_cpp_plot(df)
 end
 function create_threaded_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
-    plt = compare_benches(df, :times_cpp_ns=>"C++", :times_jl_threaded_ns=>"Threaded"; legend=:topleft, new_plot=false)
+    plt = compare_benches(df, :times_cpp_ns, :times_jl_threaded_ns; legend=:topleft, new_plot=false)
     
     xticks!(10 .^ (1:10))
     savefig("figures/monte_carlo_threaded.png")
@@ -149,7 +159,7 @@ end
 
 function create_array_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
-    plt = compare_benches(df, :times_cpp_ns=>"C++", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array"; legend=:topleft, new_plot=false)
+    plt = compare_benches(df, :times_cpp_ns, :times_jl_threaded_ns, :times_jl_array_ns,; legend=:topleft, new_plot=false)
     
     xticks!(10 .^ (1:10))
     savefig("figures/monte_carlo_array.png")
@@ -159,7 +169,7 @@ end
 
 function create_gpu_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Threads", linestyle=:dash, lw=2)
-    plt = compare_benches(df, :times_cpp_ns=>"C++", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU"; legend=:topleft, new_plot=false, yscale=:log10)
+    plt = compare_benches(df, :times_cpp_ns, :times_jl_threaded_ns, :times_jl_array_ns, :times_jl_gpu_ns; legend=:topleft, new_plot=false, yscale=:log10)
     xticks!(10 .^ (1:10))
     
     savefig("figures/monte_carlo_gpu.png")
@@ -168,22 +178,19 @@ end
 
 function create_dist_plot(df; num_threads=Threads.nthreads())
     plt = plot(df.n, df.n ./ df.n .* num_threads, label="# Cores", linestyle=:dash, lw=2)
-    plt = compare_benches(df, :times_cpp_ns=>"C++", :times_jl_threaded_ns=>"Threaded", :times_jl_array_ns=>"Array", :times_jl_gpu_ns=>"GPU", :times_jl_dist_ns=>"DArray"; legend=:topleft, new_plot=false, yscale=:log10)
+    plt = compare_benches(df, :times_cpp_ns, :times_jl_threaded_ns, :times_jl_array_ns, :times_jl_gpu_ns, :times_jl_dist_ns; legend=:topleft, new_plot=false, yscale=:log10)
     xticks!(10 .^ (1:10))
     
     savefig("figures/monte_carlo_dist.png")
     return plt
 end
 
-"""
-To run:
-
-```julia
-df = load_bench()
-display(create_cpp_plot(df))
-display(create_threaded_plot(df))
-display(create_array_plot(df))
-display(create_gpu_plot(df))
-display(create_dist_plot(df))
-```
-"""
+function plot_all()
+    df = load_bench()
+    display(create_cpp_plot(df))
+    display(create_threaded_plot(df))
+    display(create_array_plot(df))
+    display(create_gpu_plot(df))
+    display(create_dist_plot(df))
+    nothing
+end
